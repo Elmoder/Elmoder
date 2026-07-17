@@ -8,6 +8,7 @@ build and signing around this step.
 Usage:
     python3 rebrand.py <decompiled_project_dir> <logo_png>
 """
+import shutil
 import sys
 import re
 from pathlib import Path
@@ -15,6 +16,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 APP_NAME = "ALMODER TV"
+PKG_PATH = "com/t4w/ostora516"
 
 # Brand palette sampled from the logo (ARGB hex).
 NAVY = "#ff0a2540"        # primary
@@ -141,6 +143,44 @@ def patch_icons(res: Path, logo_path: Path) -> None:
     src.resize((192, 192), Image.LANCZOS).save(res / "drawable" / "logo.png", "PNG")
 
 
+def remove_info_menu(res: Path) -> None:
+    """Drop the "Contact us" / "Website" info submenu from the nav drawer."""
+    f = res / "menu" / "activity_main_drawer.xml"
+    if not f.is_file():
+        return
+    text = f.read_text(encoding="utf-8")
+    text = re.sub(
+        r'\s*<item android:title="@string/menu_title_info">.*?</item>',
+        "",
+        text,
+        count=1,
+        flags=re.DOTALL,
+    )
+    f.write_text(text, encoding="utf-8")
+
+
+def add_welcome_dialog(project: Path) -> None:
+    """Add the Welcome dialog class and show it once on MainActivity launch."""
+    smali_root = project / "smali" / PKG_PATH
+    welcome_src = Path(__file__).parent / "smali" / "Welcome.smali"
+    if not smali_root.is_dir() or not welcome_src.is_file():
+        return
+    shutil.copyfile(welcome_src, smali_root / "Welcome.smali")
+
+    main_activity = smali_root / "MainActivity.smali"
+    text = main_activity.read_text(encoding="utf-8")
+    call = (
+        "    invoke-static {p0}, "
+        f"L{PKG_PATH}/Welcome;->show(Landroid/content/Context;)V\n"
+    )
+    if "Welcome;->show" not in text:
+        # Insert right after the first-launch init call inside `if (savedState == null)`.
+        anchor = f"invoke-virtual {{p0}}, L{PKG_PATH}/MainActivity;->\u2c57()V\n"
+        if anchor in text:
+            text = text.replace(anchor, anchor + "\n" + call, 1)
+        main_activity.write_text(text, encoding="utf-8")
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         sys.exit(__doc__)
@@ -154,6 +194,8 @@ def main() -> None:
     patch_colors(res)
     patch_theme(res)
     patch_icons(res, logo)
+    remove_info_menu(res)
+    add_welcome_dialog(project)
     print(f"Rebranded {project} -> {APP_NAME}")
 
 
