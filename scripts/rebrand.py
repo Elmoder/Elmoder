@@ -159,6 +159,23 @@ def remove_info_menu(res: Path) -> None:
     f.write_text(text, encoding="utf-8")
 
 
+def replace_hardcoded_old_name(project: Path) -> None:
+    """Replace baked-in "الأسطورة TV" strings in smali with the new name.
+
+    The home fragment overrides the ActionBar title with a hardcoded old name,
+    and MainActivity uses it as an email subject.
+    """
+    old_a = '"\\u0627\\u0644\\u0623\\u0633\\u0637\\u0648\\u0631\\u0629 TV"'  # "الأسطورة TV"
+    old_b = '"TV \\u0627\\u0644\\u0623\\u0633\\u0637\\u0648\\u0631\\u0629"'  # "TV الأسطورة"
+    new = '"ALMODER TV"'
+    for smali in (project / "smali").rglob("*.smali"):
+        text = smali.read_text(encoding="utf-8")
+        if old_a in text or old_b in text:
+            smali.write_text(
+                text.replace(old_a, new).replace(old_b, new), encoding="utf-8"
+            )
+
+
 def add_welcome_dialog(project: Path) -> None:
     """Add the Welcome dialog class and show it once on MainActivity launch."""
     smali_root = project / "smali" / PKG_PATH
@@ -195,6 +212,7 @@ def main() -> None:
     patch_theme(res)
     patch_icons(res, logo)
     remove_info_menu(res)
+    replace_hardcoded_old_name(project)
     add_welcome_dialog(project)
     print(f"Rebranded {project} -> {APP_NAME}")
 
