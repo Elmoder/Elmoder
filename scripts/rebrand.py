@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Rebrand the base APK to "ALMODER TV".
+
+Applies the name, launcher icon, splash logo and theme (navy + green) changes
+to a decompiled apktool project. Run via rebrand.sh, which handles decompile,
+build and signing around this step.
+
+Usage:
+    python3 rebrand.py <decompiled_project_dir> <logo_png>
+"""
+import sys
+import re
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+APP_NAME = "ALMODER TV"
+
+# Brand palette sampled from the logo (ARGB hex).
+NAVY = "#ff0a2540"        # primary
+NAVY_DARK = "#ff071b30"   # status/nav bar, primary dark
+GREEN = "#ff6dc72a"       # accent / secondary
+GREEN_DARK = "#ff57a91f"  # secondary variant
+
+# Density -> (legacy launcher px, adaptive foreground px @108dp)
+DENSITIES = {
+    "mdpi": (48, 108),
+    "hdpi": (72, 162),
+    "xhdpi": (96, 216),
+    "xxhdpi": (144, 324),
+    "xxxhdpi": (192, 432),
+}
+
+
+def patch_strings(res: Path) -> None:
+    f = res / "values" / "strings.xml"
+    text = f.read_text(encoding="utf-8")
+    text = re.sub(
+        r'(<string name="app_name">).*?(</string>)',
+        rf"\g<1>{APP_NAME}\g<2>",
+        text,
+    )
+    text = re.sub(
+        r'(<string name="update_text">).*?(</string>)',
+        r"\g<1>يوجد تحديث جديد لتطبيق ALMODER TV\g<2>",
+        text,
+    )
+    f.write_text(text, encoding="utf-8")
+
+
+def patch_colors(res: Path) -> None:
+    f = res / "values" / "colors.xml"
+    text = f.read_text(encoding="utf-8")
+    replacements = {
+        "colorPrimary": NAVY,
+        "colorPrimaryDark": NAVY_DARK,
+        "colorAccent": GREEN,
+        "frame_color": NAVY,
+        "text_color": NAVY,
+        "teal_200": GREEN,
+        "teal_700": NAVY,
+        "ic_launcher_background": NAVY,
+    }
+    for name, value in replacements.items():
+        text = re.sub(
+            rf'(<color name="{name}">)[^<]*(</color>)',
+            rf"\g<1>{value}\g<2>",
+            text,
+        )
+    f.write_text(text, encoding="utf-8")
+
+
+def patch_theme(res: Path) -> None:
+    f = res / "values" / "styles.xml"
+    text = f.read_text(encoding="utf-8")
+    theme_items = {
+        "android:statusBarColor": NAVY_DARK,
+        "android:navigationBarColor": NAVY_DARK,
+        "colorPrimary": NAVY,
+        "colorPrimaryDark": NAVY_DARK,
+        "colorPrimaryVariant": NAVY_DARK,
+        "colorSecondary": GREEN,
+        "colorSecondaryVariant": GREEN_DARK,
+    }
+
+    def rewrite(match: re.Match) -> str:
+        block = match.group(0)
+        for name, value in theme_items.items():
+            block = re.sub(
+                rf'(<item name="{re.escape(name)}">)[^<]*(</item>)',
+                rf"\g<1>{value}\g<2>",
+                block,
+            )
+        return block
+
+    text = re.sub(
+        r'<style name="Theme\.MyApplication(\.NoActionBar)?"[^>]*>.*?</style>',
+        rewrite,
+        text,
+        flags=re.DOTALL,
+    )
+    f.write_text(text, encoding="utf-8")
+
+
+def _rounded(img: Image.Image, radius_frac: float = 0.18) -> Image.Image:
+    w, h = img.size
+    r = int(min(w, h) * radius_frac)
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=r, fill=255)
+    out = img.copy()
+    out.putalpha(mask)
+    return out
+
+
+def _circle(img: Image.Image) -> Image.Image:
+    w, h = img.size
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, w - 1, h - 1], fill=255)
+    out = img.copy()
+    out.putalpha(mask)
+    return out
+
+
+def patch_icons(res: Path, logo_path: Path) -> None:
+    src = Image.open(logo_path).convert("RGBA")
+    for dens, (launch_sz, fg_sz) in DENSITIES.items():
+        d = res / f"mipmap-{dens}"
+        d.mkdir(parents=True, exist_ok=True)
+        base = src.resize((launch_sz, launch_sz), Image.LANCZOS)
+        _rounded(base).save(d / "ic_launcher.webp", "WEBP", quality=95)
+        _circle(base).save(d / "ic_launcher_round.webp", "WEBP", quality=95)
+
+        canvas = Image.new("RGBA", (fg_sz, fg_sz), (0, 0, 0, 0))
+        inner = int(fg_sz * 0.70)
+        logo = src.resize((inner, inner), Image.LANCZOS)
+        off = (fg_sz - inner) // 2
+        canvas.paste(logo, (off, off), logo)
+        canvas.save(d / "ic_launcher_foreground.webp", "WEBP", quality=95)
+
+    # Splash logo used by activity_start.xml
+    src.resize((192, 192), Image.LANCZOS).save(res / "drawable" / "logo.png", "PNG")
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    project = Path(sys.argv[1])
+    logo = Path(sys.argv[2])
+    res = project / "res"
+    if not res.is_dir():
+        sys.exit(f"res/ not found under {project}")
+
+    patch_strings(res)
+    patch_colors(res)
+    patch_theme(res)
+    patch_icons(res, logo)
+    print(f"Rebranded {project} -> {APP_NAME}")
+
+
+if __name__ == "__main__":
+    main()
