@@ -176,6 +176,31 @@ def replace_hardcoded_old_name(project: Path) -> None:
             )
 
 
+def disable_startup_popup(project: Path) -> None:
+    """Skip the update/announcement popup (custom_dialog_update) shown on open.
+
+    The home fragment shows it when a version-string comparison fails; force the
+    branch to always jump to :cond_0 so the popup is never built or shown.
+    """
+    branch = re.compile(r"^(\s*)if-nez (p\d+|v\d+), :cond_0\s*$")
+    for smali in (project / "smali").rglob("*.smali"):
+        lines = smali.read_text(encoding="utf-8").splitlines(keepends=True)
+        popup = next(
+            (i for i, ln in enumerate(lines) if "custom_dialog_update:I" in ln),
+            None,
+        )
+        if popup is None:
+            continue
+        # Scan upward for the branch that skips the popup block; force it to
+        # always jump to :cond_0 so the popup is never built or shown.
+        for i in range(popup, -1, -1):
+            m = branch.match(lines[i])
+            if m:
+                lines[i] = f"{m.group(1)}goto :cond_0\n"
+                smali.write_text("".join(lines), encoding="utf-8")
+                break
+
+
 def add_welcome_dialog(project: Path) -> None:
     """Add the Welcome dialog class and show it once on MainActivity launch."""
     smali_root = project / "smali" / PKG_PATH
@@ -213,6 +238,7 @@ def main() -> None:
     patch_icons(res, logo)
     remove_info_menu(res)
     replace_hardcoded_old_name(project)
+    disable_startup_popup(project)
     add_welcome_dialog(project)
     print(f"Rebranded {project} -> {APP_NAME}")
 
